@@ -1,0 +1,10 @@
+streamlit
+playwright 
+scrapegraphai
+nest_asyncio
+openpyxl
+pandas
+psycopg2-binary
+sqlalchemy
+
+#run playwright install in terminal to download new browsers
