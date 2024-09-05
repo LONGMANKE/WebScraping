@@ -1,11 +1,8 @@
 import os
 import pandas as pd
-from sqlalchemy import create_engine
-import psycopg2
+from sqlalchemy import create_engine, text
 
-# Step 1: Load Data from All Excel Files in Directory
-
-# Specify the directory containing the downloaded Excel files
+# Step 1: Specify the directory containing the downloaded Excel files
 download_dir = r"C:\worldbank"
 
 # Step 2: Connect to PostgreSQL Database
@@ -14,45 +11,92 @@ download_dir = r"C:\worldbank"
 db_name = 'scraper'
 db_user = 'postgres'
 db_password = '12345'
-db_host = 'localhost'   
-db_port = '5432'        
+db_host = 'localhost'  # Or your host
+db_port = '5432'       # Default PostgreSQL port
 
-try:
-    # Create an SQLAlchemy engine to connect to PostgreSQL
-    engine = create_engine(f'postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}')
-    connection = engine.connect()
-    print("Connected to the PostgreSQL database successfully.")
-except Exception as e:
-    print(f"Failed to connect to the PostgreSQL database: {e}")
-    exit()
+# Create an SQLAlchemy engine to connect to PostgreSQL
+engine = create_engine(f'postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}')
 
-# Step 3: Loop Through Each Excel File and Push Data to PostgreSQL
+def create_table_if_not_exists(engine, table_name):
+    """
+    Create the table with an auto-incrementing 'id' column if it doesn't already exist.
+    """
+    with engine.connect() as connection:
+        # Use sqlalchemy.text to handle raw SQL
+        result = connection.execute(text(f"""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = '{table_name}'
+            );
+        """))
+        table_exists = result.scalar()
+        
+        if not table_exists:
+            connection.execute(text(f"""
+                CREATE TABLE {table_name} (
+                    id SERIAL PRIMARY KEY,
+                    "Description" TEXT,
+                    "Country" TEXT,
+                    "Project Title" TEXT,
+                    "Notice Type" TEXT,
+                    "Language" TEXT,
+                    "notice_lang_name" TEXT,
+                    "submission_date" DATE
+                );
+            """))
+            # Commit the transaction to ensure table creation is recognized
+            connection.commit()
+            print(f"Table '{table_name}' created successfully.")
 
-# Update this with your target table name
-table_name = 'world_bank'
+def load_and_push_data_to_db(engine, df, table_name):
+    """
+    Push data to PostgreSQL table.
+    """
+    try:
+        # Fetch existing descriptions from the database to avoid duplicates
+        existing_descriptions_query = text(f"SELECT \"Description\" FROM {table_name};")
+        existing_descriptions_df = pd.read_sql(existing_descriptions_query, engine)
+        existing_descriptions_set = set(existing_descriptions_df["Description"].unique())
 
-try:
-    # List all Excel files in the download directory
-    excel_files = [file for file in os.listdir(download_dir) if file.endswith(('.xls', '.xlsx'))]
+        # Filter out rows with existing descriptions
+        new_data = df[~df["Description"].isin(existing_descriptions_set)]
 
-    for file in excel_files:
-        file_path = os.path.join(download_dir, file)
-        try:
-            # Read each Excel file
-            df_excel = pd.read_excel(file_path)
-            print(f"Excel file '{file}' loaded successfully:")
-            print(df_excel.head())
+        if not new_data.empty:
+            # Write new data to PostgreSQL table, skipping the `id` column
+            new_data.to_sql(table_name, engine, if_exists='append', index=False)
+            print(f"Data pushed to the PostgreSQL table '{table_name}' successfully.")
+        else:
+            print(f"No new data to add to '{table_name}'.")
 
-            # Write data to PostgreSQL table
-            # Use if_exists='append' to add data to the table without overwriting it
-            df_excel.to_sql(table_name, engine, if_exists='append', index=False)
-            print(f"Data from '{file}' pushed to the PostgreSQL table '{table_name}' successfully.")
-        except Exception as e:
-            print(f"An error occurred while processing file '{file}': {e}")
+    except Exception as e:
+        print(f"An error occurred while pushing data to '{table_name}': {e}")
+    finally:
+        print("Data processing completed.")
 
-except Exception as e:
-    print(f"An error occurred: {e}")
-finally:
-    # Close the database connection
-    connection.close()
-    print("Database connection closed.") 
+# Define table names
+world_bank_table = 'world_bank'
+new_table = 'new_worldbank_rfps'
+
+# Create tables if they do not exist
+create_table_if_not_exists(engine, world_bank_table)
+create_table_if_not_exists(engine, new_table)
+
+# Step 3: Loop through all Excel files in the specified directory
+
+excel_files = [file for file in os.listdir(download_dir) if file.endswith(('.xls', '.xlsx'))]
+
+for excel_file in excel_files:
+    file_path = os.path.join(download_dir, excel_file)
+    
+    try:
+        # Load the Excel file
+        df_excel = pd.read_excel(file_path)
+        print(f"Excel file '{excel_file}' loaded successfully:")
+        print(df_excel.head())
+        
+        # Load data to both tables
+        load_and_push_data_to_db(engine, df_excel, world_bank_table)
+        load_and_push_data_to_db(engine, df_excel, new_table)
+    
+    except Exception as e:
+        print(f"An error occurred while processing the file '{excel_file}': {e}")

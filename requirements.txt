@@ -1,10 +1,14 @@
 streamlit
 playwright 
+#run playwright install in terminal to download new browsers
 scrapegraphai
 nest_asyncio
 openpyxl
 pandas
 psycopg2-binary
 sqlalchemy
-
-#run playwright install in terminal to download new browsers
+spacy
+# python -m spacy download en_core_web_md
+transformers
+torch  
+sklearn
